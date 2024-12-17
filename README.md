@@ -1,4 +1,4 @@
-# ⚖️☕ LegalKofi
+# ⚖️ LegalKofi
 
 ## 📑 A RAG with Cross-Encoders Re-ranking Application
 
