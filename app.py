@@ -192,7 +192,7 @@ if __name__ == "__main__":
 
         model_provider = st.selectbox(
             "**🔧 Model Provider**",
-            options=LLMConfig.PROVIDERS.keys(),
+            options=[LLMConfig.OPENAI],
             index=0
         )
         model_name = st.selectbox(
@@ -201,23 +201,23 @@ if __name__ == "__main__":
             index=0
         )
 
-        st.divider()
+        # st.divider()
 
-        uploaded_file = st.file_uploader(
-            "**📑 Upload PDF files for QnA**", type=["pdf"], accept_multiple_files=False
-        )
+        # uploaded_file = st.file_uploader(
+        #     "**📑 Upload PDF files for QnA**", type=["pdf"], accept_multiple_files=False
+        # )
 
-        process = st.button(
-            "⚡️ Process",
-        )
+        # process = st.button(
+        #     "⚡️ Process",
+        # )
 
-        if uploaded_file and process:
-            normalize_uploaded_file_name = uploaded_file.name.translate(
-                str.maketrans({"-": "_", ".": "_", " ": "_"})
-            )
-            all_splits = process_document(uploaded_file)
-            add_to_vector_store(all_splits, normalize_uploaded_file_name)
-            st.write(all_splits)
+        # if uploaded_file and process:
+        #     normalize_uploaded_file_name = uploaded_file.name.translate(
+        #         str.maketrans({"-": "_", ".": "_", " ": "_"})
+        #     )
+        #     all_splits = process_document(uploaded_file)
+        #     add_to_vector_store(all_splits, normalize_uploaded_file_name)
+        #     st.write(all_splits)
 
         st.sidebar.divider()
         st.sidebar.markdown(
