@@ -1,6 +1,7 @@
 import os
 import pinecone
 import tempfile
+import ollama
 import streamlit as st
 
 from dotenv import load_dotenv
@@ -12,6 +13,29 @@ from sentence_transformers import SentenceTransformer
 from pinecone import Pinecone, ServerlessSpec
 
 load_dotenv()
+
+system_prompt = """
+You are an AI assistant tasked with answering questions solely about a legal document given context from the document. Your goal is to analyze the document and provide a detailed and accurate answer to the question.
+
+context will be passed as "Context:"
+question will be passed as "Question:"
+
+To answer the question:
+1. Thoroughly analyze the context, identifying key information relevant to the question.
+2. Organize your thoughts and plan your response to ensure a logical flow of information.
+3. Formulate a detailed answer that directly addresses the question, using only the information provided in the context.
+4. Ensure your answer is comprehensive, covering all relevant aspects found in the context.
+5. If the context doesn't contain sufficient information to fully answer the question, state this clearly in your response.
+
+Format your response as follows:
+1. Use clear, concise language.
+2. Organize your answer into paragraphs for readability.
+3. Use bullet points or numbered lists where appropriate to break down complex information.
+4. If relevant, include any headings or subheadings to structure your response.
+5. Ensure proper grammar, punctuation, and spelling throughout your answer.
+
+Important: Base your entire response solely on the information provided in the context. Do not include any external knowledge or assumptions not present in the given text.
+"""
 
 def process_document(uploaded_file: UploadedFile) -> list[Document]:
     temp_file = tempfile.NamedTemporaryFile("wb", suffix=".pdf", delete=False)
@@ -69,6 +93,49 @@ def add_to_vector_store(documents: list[Document], file_name: str):
     
     st.success("Data added to the vector database successfully!")
 
+def query_vector_store(prompt: str, top_k: int = 5) -> list[Document]:
+    collection = get_or_create_vector_collection()
+    embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+    query_embedding = embedding_model.encode(prompt).tolist()
+    results = collection.query(vector=query_embedding, top_k=top_k, include_metadata=True)
+    return results
+
+def call_llm(context: str, prompt: str):
+    """Calls the language model with context and prompt to generate a response.
+
+    Uses Ollama to stream responses from a language model by providing context and a
+    question prompt. The model uses a system prompt to format and ground its responses appropriately.
+
+    Args:
+        context: String containing the relevant context for answering the question
+        prompt: String containing the user's question
+
+    Yields:
+        String chunks of the generated response as they become available from the model
+
+    Raises:
+        OllamaError: If there are issues communicating with the Ollama API
+    """
+    response = ollama.chat(
+        model="llama3.2",
+        stream=True,
+        messages=[
+            {
+                "role": "system",
+                "content": system_prompt,
+            },
+            {
+                "role": "user",
+                "content": f"Context: {context}, Question: {prompt}",
+            },
+        ],
+    )
+    for chunk in response:
+        if chunk["done"] is False:
+            yield chunk["message"]["content"]
+        else:
+            break
+
 if __name__ == "__main__":
     # Document Upload Area
     with st.sidebar:
@@ -97,4 +164,7 @@ if __name__ == "__main__":
     )
 
     if ask and prompt:
-        pass
+        results = query_vector_store(prompt)
+        context = results["matches"][0]
+        response = call_llm(context, prompt)
+        st.write_stream(response)
