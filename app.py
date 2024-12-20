@@ -1,5 +1,4 @@
 import os
-import pinecone
 import tempfile
 import ollama
 import streamlit as st
@@ -10,7 +9,9 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 from sentence_transformers import SentenceTransformer
-from pinecone import Pinecone, ServerlessSpec
+from pinecone import Pinecone, ServerlessSpec, Index
+from config import LLMConfig
+from openai import OpenAI
 
 load_dotenv()
 
@@ -48,7 +49,7 @@ def process_document(uploaded_file: UploadedFile) -> list[Document]:
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=100, separators=["\n\n", "\n", ".", "?", "!", " ", ""])
     return text_splitter.split_documents(docs)
 
-def get_or_create_vector_collection() -> pinecone.Index:
+def get_or_create_vector_collection() -> Index:
     # Initialize Pinecone
     pc = Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
     
@@ -72,7 +73,10 @@ def add_to_vector_store(documents: list[Document], file_name: str):
     
     # Extract text content and metadata from documents
     texts = [doc.page_content for doc in documents]
-    metadatas = [doc.metadata for doc in documents]
+    metadatas = [{
+        'text': doc.page_content,
+        **doc.metadata
+    } for doc in documents]
     ids = [f"{file_name}_{i}" for i in range(len(documents))]  # Generate unique IDs
 
     # Generate embeddings for all texts
@@ -98,48 +102,105 @@ def query_vector_store(prompt: str, top_k: int = 5) -> list[Document]:
     embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
     query_embedding = embedding_model.encode(prompt).tolist()
     results = collection.query(vector=query_embedding, top_k=top_k, include_metadata=True)
-    return results
 
-def call_llm(context: str, prompt: str):
-    """Calls the language model with context and prompt to generate a response.
+    # Convert results to Documents
+    documents = []
+    for match in results['matches']:
+        # Create Document from metadata
+        doc = Document(
+            page_content=match['metadata']['text'],
+            metadata={
+                k: v for k, v in match['metadata'].items() if k != 'text'
+            }
+        )
+        documents.append(doc)
+    
+    return documents
 
-    Uses Ollama to stream responses from a language model by providing context and a
-    question prompt. The model uses a system prompt to format and ground its responses appropriately.
+def call_llm(context: str, prompt: str, model_provider: str = "ollama", model_name: str = "llama3.2"):
+    """Calls the specified language model with context and prompt to generate a response.
 
     Args:
         context: String containing the relevant context for answering the question
         prompt: String containing the user's question
+        model_provider: String indicating the provider ("ollama" or "openai")
+        model_name: String specifying the model to use (e.g., "llama2", "gpt-4")
 
     Yields:
-        String chunks of the generated response as they become available from the model
+        String chunks of the generated response as they become available
 
     Raises:
-        OllamaError: If there are issues communicating with the Ollama API
+        Exception: If there are issues communicating with the model APIs
     """
-    response = ollama.chat(
-        model="llama3.2",
-        stream=True,
-        messages=[
+    if not LLMConfig.validate_model(model_provider, model_name):
+        raise ValueError(f"Invalid model: {model_name} for provider: {model_provider}")
+
+    def get_messages(formatted_prompt):
+        return [
             {
-                "role": "system",
-                "content": system_prompt,
+                "role": "system", 
+                "content": system_prompt
             },
             {
                 "role": "user",
-                "content": f"Context: {context}, Question: {prompt}",
-            },
-        ],
-    )
-    for chunk in response:
-        if chunk["done"] is False:
-            yield chunk["message"]["content"]
-        else:
-            break
+                "content": formatted_prompt
+            }
+        ]
+
+    def handle_ollama_response(response):
+        for chunk in response:
+            if chunk["done"] is False:
+                yield chunk["message"]["content"]
+            else:
+                break
+
+    def handle_openai_response(response): 
+        for chunk in response:
+            if chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+
+    formatted_prompt = f"Context: {context}\nQuestion: {prompt}"
+    messages = get_messages(formatted_prompt)
+
+    if model_provider == LLMConfig.OLLAMA:
+        response = ollama.chat(
+            model=model_name,
+            stream=True,
+            messages=messages
+        )
+        yield from handle_ollama_response(response)
+
+    elif model_provider == LLMConfig.OPENAI:
+        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        response = client.chat.completions.create(
+            model=model_name,
+            stream=True, 
+            messages=messages
+        )
+        yield from handle_openai_response(response)
+
+    else:
+        raise ValueError(f"Unsupported model provider: {model_provider}")
 
 if __name__ == "__main__":
     # Document Upload Area
+    model_provider, model_name = None, None
     with st.sidebar:
-        st.set_page_config(page_title="LegalKofi")
+        st.sidebar.title("Configure your LLM")
+
+        model_provider = st.selectbox(
+            "**🔧 Model Provider**",
+            options=LLMConfig.PROVIDERS.keys(),
+            index=0
+        )
+        model_name = st.selectbox(
+            "**🤖 Model Name**",
+            options=LLMConfig.PROVIDERS[model_provider]["available_models"],
+            index=0
+        )
+
+        st.divider()
+
         uploaded_file = st.file_uploader(
             "**📑 Upload PDF files for QnA**", type=["pdf"], accept_multiple_files=False
         )
@@ -156,15 +217,23 @@ if __name__ == "__main__":
             add_to_vector_store(all_splits, normalize_uploaded_file_name)
             st.write(all_splits)
 
+        st.sidebar.divider()
+        st.sidebar.markdown(
+            """
+            <div style="text-align: center;color: grey;">
+                Made with ♡ by <a href="https://paapa.dev" style="color: grey;">kiidbrian</a>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
     # Question and Answer Area
     st.header("⚖️ LegalKofi")
-    prompt = st.text_area("**Ask a question related to your document:**")
-    ask = st.button(
-        "🔥 Ask",
-    )
+    st.markdown("###### Powered by OpenAI GPT-4o and Llama 3.3 from Hugging Face 🦙")
+    prompt = st.chat_input(" What can I help you with?")
 
-    if ask and prompt:
+    if prompt:
         results = query_vector_store(prompt)
-        context = results["matches"][0]
-        response = call_llm(context, prompt)
+        context = results[0].page_content
+        response = call_llm(context, prompt, model_provider, model_name)
         st.write_stream(response)
