@@ -230,7 +230,7 @@ if __name__ == "__main__":
         )
 
     # Question and Answer Area
-    st.header("⚖️ LegalKofi")
+    st.header("⚖️🇬🇭 LegalKofi")
     st.markdown("###### Powered by OpenAI GPT-4o and Llama 3.3 from Hugging Face 🦙")
     prompt = st.chat_input(" What can I help you with?")
 
