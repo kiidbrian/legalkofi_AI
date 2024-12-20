@@ -1,6 +1,5 @@
 import os
 import tempfile
-import ollama
 import streamlit as st
 
 from dotenv import load_dotenv
@@ -12,7 +11,8 @@ from sentence_transformers import SentenceTransformer
 from pinecone import Pinecone, ServerlessSpec, Index
 from config import LLMConfig
 from openai import OpenAI
-
+from ollama import Client
+# from services import query_llama3
 load_dotenv()
 
 system_prompt = """
@@ -163,7 +163,9 @@ def call_llm(context: str, prompt: str, model_provider: str = "ollama", model_na
     messages = get_messages(formatted_prompt)
 
     if model_provider == LLMConfig.OLLAMA:
-        response = ollama.chat(
+        # response = query_llama3(messages)
+        client = Client()
+        response = client.chat(
             model=model_name,
             stream=True,
             messages=messages
